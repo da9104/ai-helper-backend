@@ -27,26 +27,37 @@ async def debug_tasks(
     notion = Client(auth=integrations["notion_access_token"])
     ds_id = integrations["notion_datasource_id"]
 
-    # Try notion.search() to find all accessible pages
+    out = {"saved_database_id": ds_id}
+
+    # 1. Retrieve the database schema
     try:
-        search_resp = notion.search(filter={"value": "page", "property": "object"})
+        db = notion.databases.retrieve(database_id=ds_id)
+        out["db_title"] = (db.get("title") or [{}])[0].get("plain_text", "(no title)")
+        out["db_properties"] = list(db.get("properties", {}).keys())
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Notion search error: {e}")
+        out["db_retrieve_error"] = str(e)
 
-    pages = search_resp.get("results", [])
-    page_titles = []
-    for p in pages:
-        props = p.get("properties", {})
-        title_prop = props.get("Title") or props.get("Name") or {}
-        parts = title_prop.get("title", [])
-        title = parts[0]["plain_text"] if parts else "(no title)"
-        page_titles.append({"id": p["id"], "title": title, "props": list(props.keys())})
+    # 2. Query without filter — get first page's raw properties
+    try:
+        resp = notion.databases.query(database_id=ds_id, page_size=1)
+        results = resp.get("results", [])
+        if results:
+            p = results[0]
+            out["first_page_id"] = p["id"]
+            out["first_page_props"] = list(p.get("properties", {}).keys())
+            # Show title value of first page
+            props = p.get("properties", {})
+            for key in ("Title", "Name", "이름", "제목"):
+                if key in props:
+                    parts = props[key].get("title", [])
+                    out["first_page_title"] = parts[0]["plain_text"] if parts else "(empty)"
+                    break
+        else:
+            out["db_query_count"] = 0
+    except Exception as e:
+        out["db_query_error"] = str(e)
 
-    return {
-        "saved_database_id": ds_id,
-        "pages_via_search": page_titles,
-        "page_count": len(pages),
-    }
+    return out
 
 
 @router.get("")
