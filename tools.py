@@ -8,6 +8,7 @@ credentials and returns (TOOL_FUNCTIONS, TOOL_SPECS).
 
 import json
 import requests
+from typing import Any
 from notion_client import Client
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
@@ -17,21 +18,86 @@ from slack_sdk.errors import SlackApiError
 # HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _safe_dict(d: Any, key: str) -> dict:
+    if isinstance(d, dict):
+        val = d.get(key)
+        if isinstance(val, dict):
+            return val
+    return {}
+
+def _safe_list(d: Any, key: str) -> list:
+    if isinstance(d, dict):
+        val = d.get(key)
+        if isinstance(val, list):
+            return val
+    return []
+
 def _parse_page(page: dict) -> dict:
-    """Extract all relevant fields from a Notion page safely."""
-    props = page.get("properties", {})
-    title_parts = props.get("Title", {}).get("title", [])
-    desc_parts  = props.get("Description", {}).get("rich_text", [])
-    status_obj  = props.get("Status", {}).get("status") or {}
-    category    = [c["name"] for c in props.get("Category", {}).get("multi_select", [])]
+    """Extract all relevant fields from a Notion page safely without linter errors."""
+    props = page.get("properties")
+    if not isinstance(props, dict):
+        props = {}
+    
+    # Safely get title
+    title_parts = []
+    for key in ("Title", "Name", "이름", "제목"):
+        prop_val = _safe_dict(props, key)
+        if prop_val:
+            val = prop_val.get("title")
+            if isinstance(val, list):
+                title_parts = val
+                break
+    title = title_parts[0].get("plain_text", "(제목 없음)") if title_parts and isinstance(title_parts[0], dict) else "(제목 없음)"
+
+    # Safely get description (rich_text or title)
+    desc_prop = _safe_dict(props, "Description")
+    desc_parts = _safe_list(desc_prop, "rich_text")
+    if not desc_parts:
+        desc_parts = _safe_list(desc_prop, "title")
+    description = desc_parts[0].get("plain_text", "") if desc_parts and isinstance(desc_parts[0], dict) else ""
+
+    # Safely get status (status or select)
+    status_prop = _safe_dict(props, "Status")
+    status_obj = _safe_dict(status_prop, "status")
+    if not status_obj:
+        status_obj = _safe_dict(status_prop, "select")
+    status = str(status_obj.get("name", "알 수 없음")) if status_obj else "알 수 없음"
+
+    # Safely get assignee
+    assign_prop = _safe_dict(props, "Created by") or _safe_dict(props, "Assignee") or _safe_dict(props, "생성자")
+    assignee = _safe_dict(assign_prop, "created_by").get("name")
+    if not assignee:
+        people = _safe_list(assign_prop, "people")
+        if people and isinstance(people[0], dict):
+            assignee = people[0].get("name")
+    if not assignee:
+        assignee = _safe_dict(assign_prop, "select").get("name")
+    if not assignee:
+        assignee = "미배정"
+    assignee = str(assignee) if assignee else "미배정"
+
+    # Safely get category
+    cat_prop = _safe_dict(props, "Category")
+    multi_select = _safe_list(cat_prop, "multi_select")
+    category = [str(c.get("name", "")) for c in multi_select if isinstance(c, dict)]
+    if not category:
+        sel = _safe_dict(cat_prop, "select").get("name")
+        if sel:
+            category = [str(sel)]
+
+    # Safely get date
+    date_prop = _safe_dict(props, "Date") or _safe_dict(props, "날짜")
+    date_val = _safe_dict(date_prop, "date").get("start", "")
+    date_val = str(date_val) if date_val else ""
+
     return {
-        "id":          page["id"],
-        "title":       title_parts[0]["plain_text"] if title_parts else "(제목 없음)",
-        "status":      status_obj.get("name", "알 수 없음"),
-        "assignee":    props.get("Created by", {}).get("created_by", {}).get("name", "미배정"),
+        "id":          str(page.get("id", "")),
+        "title":       title,
+        "status":      status,
+        "assignee":    assignee,
         "category":    category,
-        "description": desc_parts[0]["plain_text"] if desc_parts else "",
-        "date":        (props.get("Date", {}).get("date") or {}).get("start", ""),
+        "description": description,
+        "date":        date_val,
     }
 
 
@@ -69,12 +135,23 @@ def build_tools(
 
     def get_notion_tasks(status: str = "In progress") -> str:
         try:
-            response = notion.databases.query(
-                database_id=ds_id,
-                filter={"property": "Status", "status": {"equals": status}},
-            )
-            results = response.get("results", [])
-            tasks = [_parse_page(p) for p in results]
+            if status == "All":
+                response = notion.databases.query(database_id=ds_id)
+            else:
+                try:
+                    query_args = {
+                        "database_id": ds_id,
+                        "filter": {"property": "Status", "status": {"equals": status}}
+                    }
+                    response = notion.databases.query(**query_args)
+                except Exception:
+                    query_args = {
+                        "database_id": ds_id,
+                        "filter": {"property": "Status", "select": {"equals": status}}
+                    }
+                    response = notion.databases.query(**query_args)
+                    
+            tasks = [_parse_page(p) for p in response["results"]]
             return json.dumps(tasks, ensure_ascii=False, indent=2)
         except Exception as e:
             return f"Notion 오류: {e}"
@@ -85,34 +162,68 @@ def build_tools(
         date_on_or_after: str = "",
         date_on_or_before: str = "",
     ) -> str:
-        filters = []
-        if category:
-            filters.append({"property": "Category", "multi_select": {"contains": category}})
-        if keyword:
-            filters.append({"property": "Title",       "title":     {"contains": keyword}})
-            filters.append({"property": "Description", "rich_text": {"contains": keyword}})
-        if date_on_or_after:
-            filters.append({"property": "Date", "date": {"on_or_after": date_on_or_after}})
-        if date_on_or_before:
-            filters.append({"property": "Date", "date": {"on_or_before": date_on_or_before}})
+        try:
+            filters: list[dict[str, Any]] = []
+            if category:
+                filters.append({"property": "Category", "multi_select": {"contains": category}})
+            if keyword:
+                filters.append({
+                    "or": [
+                        {"property": "Title", "title": {"contains": keyword}},
+                        {"property": "Description", "rich_text": {"contains": keyword}},
+                    ]
+                })
+            if date_on_or_after:
+                filters.append({"property": "Date", "date": {"on_or_after": date_on_or_after}})
+            if date_on_or_before:
+                filters.append({"property": "Date", "date": {"on_or_before": date_on_or_before}})
 
-        if not filters:
-            query_args = {}
-        elif len(filters) == 1:
-            query_args = {"filter": filters[0]}
-        else:
-            query_args = {"filter": {"and": filters}}
-        response = notion.databases.query(database_id=ds_id, **query_args)
-        tasks = [_parse_page(p) for p in response.get("results", [])]
-        return json.dumps(tasks, ensure_ascii=False, indent=2)
+            query_args = {"filter": {"and": filters}} if filters else {}
+            response = notion.databases.query(database_id=ds_id, **query_args)
+            tasks = [_parse_page(p) for p in response.get("results", [])]
+            return json.dumps(tasks, ensure_ascii=False, indent=2)
+        except Exception as e:
+            return f"Notion 오류: {e}"
 
     def update_notion_task_status(page_id: str, new_status: str) -> str:
         try:
-            notion.pages.update(
-                page_id=page_id,
-                properties={"Status": {"status": {"name": new_status}}},
-            )
+            # Try updating as a 'status' property first
+            try:
+                notion.pages.update(
+                    page_id=page_id,
+                    properties={"Status": {"status": {"name": new_status}}},
+                )
+            except Exception:
+                # Fallback to 'select' property
+                notion.pages.update(
+                    page_id=page_id,
+                    properties={"Status": {"select": {"name": new_status}}},
+                )
             return f"상태 업데이트 완료: {new_status}"
+        except Exception as e:
+            return f"Notion 오류: {e}"
+
+    def create_notion_task(title: str, content: str, status: str = "Not started") -> str:
+        """
+        Notion DB에 새 작업을 추가합니다.
+        Returns: 생성된 페이지 URL
+        """
+        try:
+            page = notion.pages.create(
+                parent={"database_id": ds_id},
+                properties={
+                    "Title": {"title":  [{"text": {"content": title}}]},
+                    "Status": {"status": {"name": status}},
+                },
+                children=[{
+                    "object": "block",
+                    "type":   "paragraph",
+                    "paragraph": {
+                        "rich_text": [{"type": "text", "text": {"content": content}}]
+                    },
+                }],
+            )
+            return f"생성 완료 → {page['url']}"
         except Exception as e:
             return f"Notion 오류: {e}"
 
@@ -154,6 +265,7 @@ def build_tools(
         "get_notion_tasks":          get_notion_tasks,
         "search_notion_tasks":       search_notion_tasks,
         "update_notion_task_status": update_notion_task_status,
+        "create_notion_task":        create_notion_task,
         "slack_post_message":        slack_post_message,
         "slack_read_messages":       slack_read_messages,
     }
@@ -209,6 +321,26 @@ def build_tools(
                         },
                     },
                     "required": ["page_id", "new_status"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "create_notion_task",
+                "description": "새로운 Notion 작업을 생성합니다.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title":   {"type": "string", "description": "작업 제목 (필수)"},
+                        "content": {"type": "string", "description": "작업 상세 내용 (설명)"},
+                        "status": {
+                            "type": "string",
+                            "enum": ["Not started", "In progress", "To-do", "Done", "Complete"],
+                            "description": "초기 작업 상태. 기본값은 'Not started'."
+                        },
+                    },
+                    "required": ["title", "content"],
                 },
             },
         },
