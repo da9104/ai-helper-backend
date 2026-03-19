@@ -27,34 +27,25 @@ async def debug_tasks(
     notion = Client(auth=integrations["notion_access_token"])
     ds_id = integrations["notion_datasource_id"]
 
-    # First: search all accessible pages/databases with this token
+    # Try notion.search() to find all accessible pages
     try:
-        search_resp = notion.search(filter={"value": "database", "property": "object"})
+        search_resp = notion.search(filter={"value": "page", "property": "object"})
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Notion search error: {e}")
 
-    accessible = [
-        {"id": r["id"], "title": (r.get("title") or [{}])[0].get("plain_text", "(no title)")}
-        for r in search_resp.get("results", [])
-    ]
-
-    # Then try querying the saved database ID
-    db_result = None
-    if ds_id:
-        try:
-            response = notion.databases.query(database_id=ds_id)
-            results = response.get("results", [])
-            db_result = {
-                "count": len(results),
-                "property_names": list(results[0].get("properties", {}).keys()) if results else [],
-            }
-        except Exception as e:
-            db_result = {"error": str(e)}
+    pages = search_resp.get("results", [])
+    page_titles = []
+    for p in pages:
+        props = p.get("properties", {})
+        title_prop = props.get("Title") or props.get("Name") or {}
+        parts = title_prop.get("title", [])
+        title = parts[0]["plain_text"] if parts else "(no title)"
+        page_titles.append({"id": p["id"], "title": title, "props": list(props.keys())})
 
     return {
         "saved_database_id": ds_id,
-        "accessible_databases": accessible,
-        "query_result": db_result,
+        "pages_via_search": page_titles,
+        "page_count": len(pages),
     }
 
 
