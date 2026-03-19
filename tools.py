@@ -20,14 +20,14 @@ from slack_sdk.errors import SlackApiError
 def _parse_page(page: dict) -> dict:
     """Extract all relevant fields from a Notion page safely."""
     props = page.get("properties", {})
-    title_parts = props.get("Title", props.get("Name", {})).get("title", [])
+    title_parts = props.get("Title", {}).get("title", [])
     desc_parts  = props.get("Description", {}).get("rich_text", [])
     status_obj  = props.get("Status", {}).get("status") or {}
-    category    = [c["name"] for c in props.get("Category", props.get("Tags", {})).get("multi_select", [])]
+    category    = [c["name"] for c in props.get("Category", {}).get("multi_select", [])]
     return {
         "id":          page["id"],
         "title":       title_parts[0]["plain_text"] if title_parts else "(제목 없음)",
-        "status":      status_obj.get("name", ""),
+        "status":      status_obj.get("name", "알 수 없음"),
         "assignee":    props.get("Created by", {}).get("created_by", {}).get("name", "미배정"),
         "category":    category,
         "description": desc_parts[0]["plain_text"] if desc_parts else "",
