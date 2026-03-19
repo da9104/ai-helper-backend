@@ -69,10 +69,10 @@ def build_tools(
 
     def get_notion_tasks(status: str = "In progress") -> str:
         try:
-            response = notion.databases.query(
-                database_id=ds_id,
-                filter={"property": "Status", "status": {"equals": status}}
-            )
+            query_kwargs = {} if status == "All" else {
+                "filter": {"property": "Status", "status": {"equals": status}}
+            }
+            response = notion.databases.query(database_id=ds_id, **query_kwargs)
             tasks = [_parse_page(p) for p in response["results"]]
             return json.dumps(tasks, ensure_ascii=False, indent=2)
         except Exception as e:
@@ -168,8 +168,8 @@ def build_tools(
                     "properties": {
                         "status": {
                             "type": "string",
-                            "enum": ["Not started", "In progress", "To-do", "Done", "Complete"],
-                            "description": "가져올 작업 상태",
+                            "enum": ["All", "Not started", "In progress", "To-do", "Done", "Complete"],
+                            "description": "가져올 작업 상태. 'All'은 전체 목록을 반환합니다.",
                         }
                     },
                     "required": ["status"],

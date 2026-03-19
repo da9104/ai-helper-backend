@@ -15,7 +15,7 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 @router.get("")
 async def get_tasks(
-    status: str = Query(default="In progress"),
+    status: str = Query(default="All"),
     user_id: str = Depends(get_current_user_id),
 ):
     integrations = get_user_integrations(user_id)
