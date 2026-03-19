@@ -139,7 +139,6 @@ async def notion_oauth_callback(code: str = Query(...), state: str = Query(...))
         user_id,
         notion_access_token=access_token,
         notion_workspace_id=data.get("workspace_id", ""),
-        notion_datasource_id=data.get("duplicated_template_id") or data.get("bot_id", ""),
     )
 
     return RedirectResponse(url=f"{frontend_url}/settings?notion=connected")
