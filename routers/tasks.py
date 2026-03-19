@@ -21,6 +21,8 @@ async def get_tasks(
     integrations = get_user_integrations(user_id)
     if not integrations or not integrations.get("notion_access_token"):
         raise HTTPException(status_code=400, detail="Notion not connected.")
+    if not integrations.get("notion_datasource_id"):
+        raise HTTPException(status_code=400, detail="Notion database ID not set. Go to Settings and save your Notion Database ID.")
 
     tool_functions, _ = build_tools(
         notion_token=integrations["notion_access_token"],

@@ -19,15 +19,15 @@ from slack_sdk.errors import SlackApiError
 
 def _parse_page(page: dict) -> dict:
     """Extract all relevant fields from a Notion page safely."""
-    props = page["properties"]
-    title_parts = props.get("Title", {}).get("title", [])
+    props = page.get("properties", {})
+    title_parts = props.get("Title", props.get("Name", {})).get("title", [])
     desc_parts  = props.get("Description", {}).get("rich_text", [])
     status_obj  = props.get("Status", {}).get("status") or {}
-    category    = [c["name"] for c in props.get("Category", {}).get("multi_select", [])]
+    category    = [c["name"] for c in props.get("Category", props.get("Tags", {})).get("multi_select", [])]
     return {
         "id":          page["id"],
         "title":       title_parts[0]["plain_text"] if title_parts else "(제목 없음)",
-        "status":      status_obj.get("name", "알 수 없음"),
+        "status":      status_obj.get("name", ""),
         "assignee":    props.get("Created by", {}).get("created_by", {}).get("name", "미배정"),
         "category":    category,
         "description": desc_parts[0]["plain_text"] if desc_parts else "",
@@ -68,12 +68,13 @@ def build_tools(
     # ── Notion tools ──────────────────────────────────────────────────────────
 
     def get_notion_tasks(status: str = "In progress") -> str:
+        query_kwargs = {} if status == "All" else {
+            "filter": {"property": "Status", "status": {"equals": status}}
+        }
         try:
-            query_kwargs = {} if status == "All" else {
-                "filter": {"property": "Status", "status": {"equals": status}}
-            }
             response = notion.databases.query(database_id=ds_id, **query_kwargs)
-            tasks = [_parse_page(p) for p in response["results"]]
+            results = response.get("results", [])
+            tasks = [_parse_page(p) for p in results]
             return json.dumps(tasks, ensure_ascii=False, indent=2)
         except Exception as e:
             return f"Notion 오류: {e}"
@@ -84,26 +85,26 @@ def build_tools(
         date_on_or_after: str = "",
         date_on_or_before: str = "",
     ) -> str:
-        try:
-            filters = []
-            if category:
-                filters.append({"property": "Category", "multi_select": {"contains": category}})
-            if keyword:
-                filters.append({"or": [
-                    {"property": "Title",       "title":     {"contains": keyword}},
-                    {"property": "Description", "rich_text": {"contains": keyword}},
-                ]})
-            if date_on_or_after:
-                filters.append({"property": "Date", "date": {"on_or_after": date_on_or_after}})
-            if date_on_or_before:
-                filters.append({"property": "Date", "date": {"on_or_before": date_on_or_before}})
+        filters = []
+        if category:
+            filters.append({"property": "Category", "multi_select": {"contains": category}})
+        if keyword:
+            filters.append({"property": "Title",       "title":     {"contains": keyword}})
+            filters.append({"property": "Description", "rich_text": {"contains": keyword}})
+        if date_on_or_after:
+            filters.append({"property": "Date", "date": {"on_or_after": date_on_or_after}})
+        if date_on_or_before:
+            filters.append({"property": "Date", "date": {"on_or_before": date_on_or_before}})
 
-            query_args = {"filter": {"and": filters}} if filters else {}
-            response = notion.databases.query(database_id=ds_id, **query_args)
-            tasks = [_parse_page(p) for p in response["results"]]
-            return json.dumps(tasks, ensure_ascii=False, indent=2)
-        except Exception as e:
-            return f"Notion 오류: {e}"
+        if not filters:
+            query_args = {}
+        elif len(filters) == 1:
+            query_args = {"filter": filters[0]}
+        else:
+            query_args = {"filter": {"and": filters}}
+        response = notion.databases.query(database_id=ds_id, **query_args)
+        tasks = [_parse_page(p) for p in response.get("results", [])]
+        return json.dumps(tasks, ensure_ascii=False, indent=2)
 
     def update_notion_task_status(page_id: str, new_status: str) -> str:
         try:
