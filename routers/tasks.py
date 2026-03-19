@@ -50,7 +50,7 @@ async def debug_tasks(
 
 @router.get("")
 async def get_tasks(
-    status: str = Query(default="All"),
+    status: str = Query(default="In progress"),
     user_id: str = Depends(get_current_user_id),
 ):
     integrations = get_user_integrations(user_id)

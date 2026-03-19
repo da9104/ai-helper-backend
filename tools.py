@@ -68,11 +68,11 @@ def build_tools(
     # ── Notion tools ──────────────────────────────────────────────────────────
 
     def get_notion_tasks(status: str = "In progress") -> str:
-        query_kwargs = {} if status == "All" else {
-            "filter": {"property": "Status", "status": {"equals": status}}
-        }
         try:
-            response = notion.databases.query(database_id=ds_id, **query_kwargs)
+            response = notion.databases.query(
+                database_id=ds_id,
+                filter={"property": "Status", "status": {"equals": status}},
+            )
             results = response.get("results", [])
             tasks = [_parse_page(p) for p in results]
             return json.dumps(tasks, ensure_ascii=False, indent=2)
