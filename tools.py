@@ -7,7 +7,6 @@ credentials and returns (TOOL_FUNCTIONS, TOOL_SPECS).
 """
 
 import json
-import requests
 from typing import Any
 from notion_client import Client
 from slack_sdk import WebClient
@@ -133,24 +132,9 @@ def build_tools(
 
     # ── Notion tools ──────────────────────────────────────────────────────────
 
-    def get_notion_tasks(status: str = "In progress") -> str:
+    def get_notion_tasks() -> str:
         try:
-            if status == "All":
-                response = notion.databases.query(database_id=ds_id)
-            else:
-                try:
-                    query_args = {
-                        "database_id": ds_id,
-                        "filter": {"property": "Status", "status": {"equals": status}}
-                    }
-                    response = notion.databases.query(**query_args)
-                except Exception:
-                    query_args = {
-                        "database_id": ds_id,
-                        "filter": {"property": "Status", "select": {"equals": status}}
-                    }
-                    response = notion.databases.query(**query_args)
-                    
+            response = notion.databases.query(database_id=ds_id)
             tasks = [_parse_page(p) for p in response["results"]]
             return json.dumps(tasks, ensure_ascii=False, indent=2)
         except Exception as e:
@@ -178,27 +162,26 @@ def build_tools(
             if date_on_or_before:
                 filters.append({"property": "Date", "date": {"on_or_before": date_on_or_before}})
 
-            query_args = {"filter": {"and": filters}} if filters else {}
-            response = notion.databases.query(database_id=ds_id, **query_args)
+            query_args: dict = {"database_id": ds_id}
+            if filters:
+                query_args["filter"] = {"and": filters}
+            response = notion.databases.query(**query_args)
             tasks = [_parse_page(p) for p in response.get("results", [])]
             return json.dumps(tasks, ensure_ascii=False, indent=2)
         except Exception as e:
             return f"Notion 오류: {e}"
 
+    def _notion_page_update(page_id: str, body: dict) -> dict:
+        return notion.pages.update(page_id=page_id, **body)
+
+    def _notion_page_create(body: dict) -> dict:
+        return notion.pages.create(**body)
+
     def update_notion_task_status(page_id: str, new_status: str) -> str:
         try:
-            # Try updating as a 'status' property first
-            try:
-                notion.pages.update(
-                    page_id=page_id,
-                    properties={"Status": {"status": {"name": new_status}}},
-                )
-            except Exception:
-                # Fallback to 'select' property
-                notion.pages.update(
-                    page_id=page_id,
-                    properties={"Status": {"select": {"name": new_status}}},
-                )
+            _notion_page_update(page_id, {
+                "properties": {"Status": {"status": {"name": new_status}}}
+            })
             return f"상태 업데이트 완료: {new_status}"
         except Exception as e:
             return f"Notion 오류: {e}"
@@ -209,20 +192,20 @@ def build_tools(
         Returns: 생성된 페이지 URL
         """
         try:
-            page = notion.pages.create(
-                parent={"database_id": ds_id},
-                properties={
-                    "Title": {"title":  [{"text": {"content": title}}]},
+            page = _notion_page_create({
+                "parent": {"database_id": ds_id},
+                "properties": {
+                    "Title": {"title": [{"text": {"content": title}}]},
                     "Status": {"status": {"name": status}},
                 },
-                children=[{
+                "children": [{
                     "object": "block",
-                    "type":   "paragraph",
+                    "type": "paragraph",
                     "paragraph": {
                         "rich_text": [{"type": "text", "text": {"content": content}}]
                     },
                 }],
-            )
+            })
             return f"생성 완료 → {page['url']}"
         except Exception as e:
             return f"Notion 오류: {e}"

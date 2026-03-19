@@ -229,9 +229,10 @@ async def integration_status(user_id: str = Depends(get_current_user_id)):
     from db import get_user_integrations
     row = get_user_integrations(user_id) or {}
     return {
-        "notion": bool(row.get("notion_access_token")),
-        "slack":  bool(row.get("slack_bot_token")),
+        "notion":            bool(row.get("notion_access_token")),
+        "slack":             bool(row.get("slack_bot_token")),
         "notion_database_id": row.get("notion_datasource_id", ""),
+        "notion_api_key_set": bool(row.get("notion_api_key")),
     }
 
 
@@ -248,9 +249,25 @@ async def update_notion_database(
     db_id = body.database_id.strip()
     if not db_id:
         raise HTTPException(status_code=400, detail="database_id is required")
-    # Notion database IDs are 32 hex chars, sometimes with dashes
     clean = db_id.replace("-", "")
     if len(clean) != 32 or not all(c in "0123456789abcdefABCDEF" for c in clean):
         raise HTTPException(status_code=400, detail="Invalid Notion database ID format")
     save_integration(user_id, notion_datasource_id=db_id)
+    return {"ok": True}
+
+
+class NotionApiKeyUpdate(BaseModel):
+    api_key: str
+
+
+@router.patch("/notion/apikey")
+async def update_notion_api_key(
+    body: NotionApiKeyUpdate,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Save the user's Notion internal integration API key."""
+    key = body.api_key.strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="api_key is required")
+    save_integration(user_id, notion_api_key=key)
     return {"ok": True}
