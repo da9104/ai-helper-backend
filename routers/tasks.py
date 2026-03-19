@@ -27,24 +27,34 @@ async def debug_tasks(
     notion = Client(auth=integrations["notion_access_token"])
     ds_id = integrations["notion_datasource_id"]
 
+    # First: search all accessible pages/databases with this token
     try:
-        response = notion.databases.query(database_id=ds_id)
+        search_resp = notion.search(filter={"value": "database", "property": "object"})
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Notion error: {e}")
+        raise HTTPException(status_code=502, detail=f"Notion search error: {e}")
 
-    results = response.get("results", [])
-    if not results:
-        return {"count": 0, "property_names": [], "raw_first": None}
+    accessible = [
+        {"id": r["id"], "title": (r.get("title") or [{}])[0].get("plain_text", "(no title)")}
+        for r in search_resp.get("results", [])
+    ]
 
-    first = results[0]
-    prop_names = list(first.get("properties", {}).keys())
-    # Return property names and first page's raw properties for inspection
+    # Then try querying the saved database ID
+    db_result = None
+    if ds_id:
+        try:
+            response = notion.databases.query(database_id=ds_id)
+            results = response.get("results", [])
+            db_result = {
+                "count": len(results),
+                "property_names": list(results[0].get("properties", {}).keys()) if results else [],
+            }
+        except Exception as e:
+            db_result = {"error": str(e)}
+
     return {
-        "count": len(results),
-        "property_names": prop_names,
-        "first_page_properties": {
-            k: str(v)[:200] for k, v in first.get("properties", {}).items()
-        },
+        "saved_database_id": ds_id,
+        "accessible_databases": accessible,
+        "query_result": db_result,
     }
 
 
