@@ -258,17 +258,11 @@ def build_tools(
             "type": "function",
             "function": {
                 "name": "get_notion_tasks",
-                "description": "Notion DB에서 상태별 작업 목록을 가져옵니다.",
+                "description": "Notion DB에서 전체 작업 목록을 가져옵니다.",
                 "parameters": {
                     "type": "object",
-                    "properties": {
-                        "status": {
-                            "type": "string",
-                            "enum": ["All", "Not started", "In progress", "To-do", "Done", "Complete"],
-                            "description": "가져올 작업 상태. 'All'은 전체 목록을 반환합니다.",
-                        }
-                    },
-                    "required": ["status"],
+                    "properties": {},
+                    "required": [],
                 },
             },
         },
